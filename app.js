@@ -1,7 +1,3 @@
-// ==========================================
-// FIREBASE
-// ==========================================
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
 
 import {
@@ -11,11 +7,17 @@ import {
   getDocs,
   query,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
+  onSnapshot
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
 
+
+/* =========================
+   FIREBASE
+========================= */
+
 const firebaseConfig = {
-  apiKey: "AIzaSyBEwLV6WDvMkzuQ-ugOBm2S2YZqQ6Pp0PM",
+  apiKey: "AIzaSyBEwLV6WDmVkzuQ-ugOBm2S2YZqQ6Pp0PM",
   authDomain: "ritika-e71b7.firebaseapp.com",
   projectId: "ritika-e71b7",
   storageBucket: "ritika-e71b7.firebasestorage.app",
@@ -28,27 +30,17 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 
-// ==========================================
-// CLOUDINARY
-// ==========================================
+/* =========================
+   CLOUDINARY
+========================= */
 
 const CLOUDINARY_CLOUD_NAME = "iiyugxww";
 const CLOUDINARY_UPLOAD_PRESET = "ritika-files";
 
 
-// ==========================================
-// LIMITS
-// ==========================================
-
-const MAX_FILE_SIZE = 100 * 1024 * 1024;
-
-// Cloudinary chunk size
-const CHUNK_SIZE = 20 * 1024 * 1024;
-
-
-// ==========================================
-// ELEMENTS
-// ==========================================
+/* =========================
+   FILE ELEMENTS
+========================= */
 
 const fileInput = document.getElementById("fileInput");
 const chooseBtn = document.getElementById("chooseBtn");
@@ -58,620 +50,272 @@ const fileCount = document.getElementById("fileCount");
 const uploadCard = document.querySelector(".upload-card");
 
 const progressBox = document.getElementById("progressBox");
-const uploadStatus = document.getElementById("uploadStatus");
-const progressPercent = document.getElementById("progressPercent");
 const progressBar = document.getElementById("progressBar");
+const progressPercent = document.getElementById("progressPercent");
+const uploadStatus = document.getElementById("uploadStatus");
 
 
-// ==========================================
-// STATE
-// ==========================================
-
-let files = [];
-
-
-// ==========================================
-// CHOOSE FILES
-// ==========================================
+/* =========================
+   FILE UPLOAD
+========================= */
 
 chooseBtn.addEventListener("click", () => {
   fileInput.click();
 });
 
-fileInput.addEventListener("change", (event) => {
-
-  const selectedFiles = [...event.target.files];
-
-  uploadFiles(selectedFiles);
+fileInput.addEventListener("change", event => {
+  uploadFiles([...event.target.files]);
 
   fileInput.value = "";
 });
 
 
-// ==========================================
-// DRAG & DROP
-// ==========================================
-
-uploadCard.addEventListener("dragover", (event) => {
-
+uploadCard.addEventListener("dragover", event => {
   event.preventDefault();
-
   uploadCard.classList.add("dragging");
-
 });
+
 
 uploadCard.addEventListener("dragleave", () => {
-
   uploadCard.classList.remove("dragging");
-
 });
 
-uploadCard.addEventListener("drop", (event) => {
 
+uploadCard.addEventListener("drop", event => {
   event.preventDefault();
 
   uploadCard.classList.remove("dragging");
 
-  const droppedFiles = [...event.dataTransfer.files];
-
-  uploadFiles(droppedFiles);
-
+  uploadFiles([...event.dataTransfer.files]);
 });
 
 
-// ==========================================
-// UPLOAD FILES
-// ==========================================
+async function uploadFiles(files) {
 
-async function uploadFiles(newFiles) {
-
-  if (!newFiles.length) return;
-
-  const validFiles = [];
-
-  for (const file of newFiles) {
-
-    if (file.size > MAX_FILE_SIZE) {
-
-      alert(
-        `"${file.name}" is larger than 100 MB and cannot be uploaded.`
-      );
-
-      continue;
-    }
-
-    validFiles.push(file);
-  }
-
-  if (!validFiles.length) return;
+  if (!files.length) return;
 
   progressBox.classList.remove("hidden");
 
-  chooseBtn.disabled = true;
+  for (const file of files) {
 
-  try {
+    try {
 
-    for (let i = 0; i < validFiles.length; i++) {
+      await uploadFile(file);
 
-      const file = validFiles[i];
+    } catch (error) {
 
-      uploadStatus.textContent =
-        `Uploading ${i + 1} of ${validFiles.length}: ${file.name}`;
+      console.error(error);
 
-      progressPercent.textContent = "0%";
-      progressBar.style.width = "0%";
+      uploadStatus.textContent = "Upload failed";
+      progressPercent.textContent = "Error";
 
-      const uploadedFile =
-        await uploadToCloudinaryChunked(file);
-
-      await saveFileToFirestore(
-        file,
-        uploadedFile
+      alert(
+        `Could not upload "${file.name}".\n\n${error.message}`
       );
-
     }
-
-    uploadStatus.textContent = "Upload complete!";
-    progressPercent.textContent = "100%";
-    progressBar.style.width = "100%";
-
-    await loadFiles();
-
-    setTimeout(() => {
-
-      progressBox.classList.add("hidden");
-
-      progressBar.style.width = "0%";
-      progressPercent.textContent = "0%";
-
-    }, 1200);
-
-  } catch (error) {
-
-    console.error("Upload error:", error);
-
-    uploadStatus.textContent = "Upload failed";
-    progressPercent.textContent = "Error";
-    progressBar.style.width = "0%";
-
-    alert(
-      "Upload failed.\n\n" +
-      error.message
-    );
-
-  } finally {
-
-    chooseBtn.disabled = false;
-
   }
+
+  setTimeout(() => {
+    progressBox.classList.add("hidden");
+    progressBar.style.width = "0%";
+    progressPercent.textContent = "0%";
+  }, 1200);
 }
 
 
-// ==========================================
-// CLOUDINARY CHUNKED UPLOAD
-// ==========================================
-
-function uploadToCloudinaryChunked(file) {
-
-  return new Promise((resolve, reject) => {
-
-    const url =
-      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
-
-    let start = 0;
-
-    let uploadId = null;
-
-    let lastResponse = null;
-
-
-    async function uploadNextChunk() {
-
-      try {
-
-        const end = Math.min(
-          start + CHUNK_SIZE,
-          file.size
-        );
-
-        const chunk = file.slice(
-          start,
-          end
-        );
-
-        const formData = new FormData();
-
-        formData.append(
-          "file",
-          chunk,
-          file.name
-        );
-
-        formData.append(
-          "upload_preset",
-          CLOUDINARY_UPLOAD_PRESET
-        );
-
-
-        const response =
-          await uploadChunk(
-            url,
-            formData,
-            start,
-            end,
-            file.size,
-            uploadId
-          );
-
-
-        lastResponse = response;
-
-        if (response.upload_id) {
-          uploadId = response.upload_id;
-        }
-
-
-        start = end;
-
-
-        const percent = Math.round(
-          (start / file.size) * 100
-        );
-
-        progressPercent.textContent =
-          `${percent}%`;
-
-        progressBar.style.width =
-          `${percent}%`;
-
-
-        if (
-          response.done === true ||
-          start >= file.size
-        ) {
-
-          resolve(response);
-
-          return;
-
-        }
-
-
-        await uploadNextChunk();
-
-      } catch (error) {
-
-        reject(error);
-
-      }
-
-    }
-
-
-    uploadNextChunk();
-
-  });
-
-}
-
-
-// ==========================================
-// SEND CHUNK
-// ==========================================
-
-function uploadChunk(
-  url,
-  formData,
-  start,
-  end,
-  total,
-  uploadId
-) {
+function uploadFile(file) {
 
   return new Promise((resolve, reject) => {
 
     const xhr = new XMLHttpRequest();
 
-    xhr.open(
-      "POST",
-      url
-    );
+    const url =
+      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+
+    const formData = new FormData();
+
+    formData.append("file", file);
+    formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
 
 
-    const contentRange =
-      `bytes ${start}-${end - 1}/${total}`;
-
-    xhr.setRequestHeader(
-      "Content-Range",
-      contentRange
-    );
+    xhr.open("POST", url);
 
 
-    if (uploadId) {
+    xhr.upload.addEventListener("progress", event => {
 
-      xhr.setRequestHeader(
-        "X-Unique-Upload-Id",
-        uploadId
-      );
+      if (!event.lengthComputable) return;
 
-    }
+      const percent =
+        Math.round((event.loaded / event.total) * 100);
 
-
-    xhr.upload.addEventListener(
-      "progress",
-      (event) => {
-
-        if (!event.lengthComputable) return;
-
-        const currentChunkProgress =
-          event.loaded / event.total;
-
-        const overallProgress =
-          (
-            start +
-            event.loaded
-          ) / total;
-
-        const percent =
-          Math.round(
-            overallProgress * 100
-          );
-
-        progressPercent.textContent =
-          `${percent}%`;
-
-        progressBar.style.width =
-          `${percent}%`;
-
-      }
-    );
+      progressBar.style.width = `${percent}%`;
+      progressPercent.textContent = `${percent}%`;
+      uploadStatus.textContent = `Uploading ${file.name}...`;
+    });
 
 
-    xhr.onload = () => {
+    xhr.onload = async () => {
 
-      if (
-        xhr.status >= 200 &&
-        xhr.status < 300
-      ) {
+      if (xhr.status >= 200 && xhr.status < 300) {
 
         try {
 
-          resolve(
-            JSON.parse(
-              xhr.responseText
-            )
-          );
+          const result = JSON.parse(xhr.responseText);
 
-        } catch {
+          await addDoc(collection(db, "files"), {
 
-          reject(
-            new Error(
-              "Invalid Cloudinary response."
-            )
-          );
+            name: file.name,
+            size: file.size,
+            type: file.type,
 
+            url: result.secure_url,
+            publicId: result.public_id,
+
+            resourceType: result.resource_type,
+            format: result.format,
+
+            createdAt: serverTimestamp()
+          });
+
+          uploadStatus.textContent = "Upload complete";
+
+          await loadFiles();
+
+          resolve(result);
+
+        } catch (error) {
+
+          reject(error);
         }
 
       } else {
 
         reject(
           new Error(
-            `Cloudinary error: ${xhr.status} - ${xhr.responseText}`
+            `Cloudinary upload failed (${xhr.status}): ${xhr.responseText}`
           )
         );
-
       }
-
     };
 
 
     xhr.onerror = () => {
-
-      reject(
-        new Error(
-          "Network error during upload."
-        )
-      );
-
+      reject(new Error("Network error while uploading."));
     };
 
 
     xhr.send(formData);
-
   });
-
 }
 
 
-// ==========================================
-// FIRESTORE
-// ==========================================
-
-async function saveFileToFirestore(
-  file,
-  cloudinaryData
-) {
-
-  await addDoc(
-    collection(db, "files"),
-    {
-
-      name: file.name,
-
-      size: file.size,
-
-      type:
-        file.type ||
-        "application/octet-stream",
-
-      url:
-        cloudinaryData.secure_url,
-
-      publicId:
-        cloudinaryData.public_id,
-
-      resourceType:
-        cloudinaryData.resource_type,
-
-      format:
-        cloudinaryData.format || null,
-
-      createdAt:
-        serverTimestamp()
-
-    }
-  );
-
-}
-
-
-// ==========================================
-// LOAD FILES
-// ==========================================
+/* =========================
+   LOAD FILES
+========================= */
 
 async function loadFiles() {
 
   try {
 
-    const filesQuery = query(
+    const q = query(
       collection(db, "files"),
-      orderBy(
-        "createdAt",
-        "desc"
-      )
+      orderBy("createdAt", "desc")
     );
 
-    const snapshot =
-      await getDocs(filesQuery);
+    const snapshot = await getDocs(q);
 
-    files = [];
+    const files = [];
 
-    snapshot.forEach((doc) => {
-
-      const data = doc.data();
+    snapshot.forEach(doc => {
 
       files.push({
-
         id: doc.id,
-
-        name: data.name,
-
-        size: data.size,
-
-        type: data.type,
-
-        url: data.url,
-
-        publicId: data.publicId,
-
-        resourceType:
-          data.resourceType,
-
-        format:
-          data.format,
-
-        createdAt:
-          data.createdAt
-
+        ...doc.data()
       });
 
     });
 
-    renderFiles();
+    renderFiles(files);
 
   } catch (error) {
 
-    console.error(
-      "Error loading files:",
-      error
-    );
-
+    console.error("Could not load files:", error);
   }
-
 }
 
 
-// ==========================================
-// RENDER FILES
-// ==========================================
-
-function renderFiles() {
+function renderFiles(files) {
 
   fileList.innerHTML = "";
 
-  fileCount.textContent =
-    files.length;
+  fileCount.textContent = files.length;
 
 
   if (files.length === 0) {
 
-    fileList.appendChild(
-      createEmptyState()
-    );
+    fileList.appendChild(createEmptyState());
 
     return;
-
   }
 
 
-  files.forEach((file) => {
+  files.forEach(file => {
 
-    const card =
-      document.createElement("div");
-
-    card.className =
-      "file-card";
+    const card = document.createElement("div");
+    card.className = "file-card";
 
 
-    const icon =
-      document.createElement("div");
-
-    icon.className =
-      "file-icon";
-
-    icon.textContent =
-      getFileIcon(file.name);
+    const icon = document.createElement("div");
+    icon.className = "file-icon";
+    icon.textContent = getFileIcon(file.name);
 
 
-    const info =
-      document.createElement("div");
-
-    info.className =
-      "file-info";
+    const info = document.createElement("div");
+    info.className = "file-info";
 
 
-    const name =
-      document.createElement("div");
-
-    name.className =
-      "file-name";
-
-    name.textContent =
-      file.name;
+    const name = document.createElement("div");
+    name.className = "file-name";
+    name.textContent = file.name;
 
 
-    const size =
-      document.createElement("div");
-
-    size.className =
-      "file-size";
-
-    size.textContent =
-      formatSize(file.size);
+    const size = document.createElement("div");
+    size.className = "file-size";
+    size.textContent = formatSize(file.size);
 
 
     info.appendChild(name);
-
     info.appendChild(size);
 
 
-    const download =
-      document.createElement("button");
+    const download = document.createElement("button");
 
-    download.className =
-      "download-btn";
-
-    download.textContent =
-      "↓";
-
-    download.title =
-      "Download";
+    download.className = "download-btn";
+    download.textContent = "↓";
+    download.title = "Download";
 
 
-    download.addEventListener(
-      "click",
-      () => {
+    download.addEventListener("click", () => {
 
-        downloadFile(file);
-
-      }
-    );
+      window.open(file.url, "_blank");
+    });
 
 
     card.appendChild(icon);
-
     card.appendChild(info);
-
     card.appendChild(download);
 
     fileList.appendChild(card);
 
   });
-
 }
 
 
-// ==========================================
-// EMPTY STATE
-// ==========================================
-
 function createEmptyState() {
 
-  const div =
-    document.createElement("div");
+  const div = document.createElement("div");
 
-  div.className =
-    "empty-state";
+  div.className = "empty-state";
 
   div.innerHTML = `
     <div>♡</div>
@@ -680,55 +324,256 @@ function createEmptyState() {
   `;
 
   return div;
-
 }
 
 
-// ==========================================
-// DOWNLOAD
-// ==========================================
+/* =========================
+   CHAT
+========================= */
 
-function downloadFile(file) {
+const chatForm = document.getElementById("chatForm");
+const messageInput = document.getElementById("messageInput");
+const chatMessages = document.getElementById("chatMessages");
 
-  if (!file.url) {
 
-    alert(
-      "File URL not found."
-    );
+chatForm.addEventListener("submit", async event => {
+
+  event.preventDefault();
+
+  const message = messageInput.value.trim();
+
+  if (!message) return;
+
+
+  messageInput.disabled = true;
+
+
+  try {
+
+    await addDoc(collection(db, "messages"), {
+
+      text: message,
+
+      createdAt: serverTimestamp(),
+
+      sender: getSenderName()
+
+    });
+
+    messageInput.value = "";
+
+  } catch (error) {
+
+    console.error(error);
+
+    alert("Message could not be sent.");
+
+  } finally {
+
+    messageInput.disabled = false;
+    messageInput.focus();
+  }
+});
+
+
+/* =========================
+   REAL-TIME CHAT
+========================= */
+
+function startChatListener() {
+
+  const q = query(
+    collection(db, "messages"),
+    orderBy("createdAt", "asc")
+  );
+
+
+  onSnapshot(
+    q,
+    snapshot => {
+
+      const messages = [];
+
+      snapshot.forEach(doc => {
+
+        messages.push({
+          id: doc.id,
+          ...doc.data()
+        });
+
+      });
+
+      renderMessages(messages);
+
+    },
+
+    error => {
+
+      console.error("Chat listener error:", error);
+    }
+  );
+}
+
+
+function renderMessages(messages) {
+
+  chatMessages.innerHTML = "";
+
+
+  if (messages.length === 0) {
+
+    const empty = document.createElement("div");
+
+    empty.className = "chat-empty";
+
+    empty.innerHTML = `
+      <div>♡</div>
+      <p>No messages yet.</p>
+      <small>Say something.</small>
+    `;
+
+    chatMessages.appendChild(empty);
 
     return;
-
   }
 
 
-  const link =
-    document.createElement("a");
+  messages.forEach(message => {
 
-  link.href =
-    file.url;
+    const wrapper = document.createElement("div");
 
-  link.target =
-    "_blank";
+    const sender = message.sender || "";
 
-  link.rel =
-    "noopener noreferrer";
-
-  link.download =
-    file.name;
+    const isMe =
+      sender === getSenderName();
 
 
-  document.body.appendChild(link);
+    wrapper.className =
+      `message ${isMe ? "me" : "them"}`;
 
-  link.click();
 
-  link.remove();
+    const bubble = document.createElement("div");
 
+    bubble.className = "message-bubble";
+
+
+    const text = document.createElement("div");
+
+    text.className = "message-text";
+
+    text.innerHTML =
+      linkify(escapeHTML(message.text || ""));
+
+
+    const time = document.createElement("div");
+
+    time.className = "message-time";
+
+    time.textContent =
+      formatMessageTime(message.createdAt);
+
+
+    bubble.appendChild(text);
+    bubble.appendChild(time);
+
+    wrapper.appendChild(bubble);
+
+    chatMessages.appendChild(wrapper);
+  });
+
+
+  chatMessages.scrollTop =
+    chatMessages.scrollHeight;
 }
 
 
-// ==========================================
-// SIZE
-// ==========================================
+/* =========================
+   SIMPLE NAME
+========================= */
+
+function getSenderName() {
+
+  let name = localStorage.getItem("ritika_chat_name");
+
+
+  if (!name) {
+
+    name =
+      prompt("Enter your name for the chat:");
+
+    name =
+      (name || "Guest").trim().slice(0, 30);
+
+    localStorage.setItem(
+      "ritika_chat_name",
+      name
+    );
+  }
+
+
+  return name;
+}
+
+
+/* =========================
+   URL LINKIFY
+========================= */
+
+function escapeHTML(text) {
+
+  const div = document.createElement("div");
+
+  div.textContent = text;
+
+  return div.innerHTML;
+}
+
+
+function linkify(text) {
+
+  const urlRegex =
+    /(https?:\/\/[^\s<]+)/g;
+
+
+  return text.replace(
+    urlRegex,
+
+    url => {
+
+      const cleanUrl =
+        url.replace(/[.,!?)]$/, "");
+
+      return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>`;
+    }
+  );
+}
+
+
+/* =========================
+   TIME
+========================= */
+
+function formatMessageTime(timestamp) {
+
+  if (!timestamp) {
+    return "Sending...";
+  }
+
+
+  const date =
+    timestamp.toDate();
+
+
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+
+/* =========================
+   FILE HELPERS
+========================= */
 
 function formatSize(bytes) {
 
@@ -736,136 +581,82 @@ function formatSize(bytes) {
 
 
   if (bytes < 1024) {
-
     return `${bytes} B`;
-
   }
 
 
   if (bytes < 1024 * 1024) {
-
-    return `${(
-      bytes / 1024
-    ).toFixed(1)} KB`;
-
+    return `${(bytes / 1024).toFixed(1)} KB`;
   }
 
 
-  if (
-    bytes <
-    1024 * 1024 * 1024
-  ) {
-
-    return `${(
-      bytes /
-      (1024 * 1024)
-    ).toFixed(1)} MB`;
-
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
 
-  return `${(
-    bytes /
-    (1024 * 1024 * 1024)
-  ).toFixed(1)} GB`;
-
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-
-// ==========================================
-// FILE ICON
-// ==========================================
 
 function getFileIcon(name) {
 
   const ext =
-    name
-      .split(".")
-      .pop()
-      .toLowerCase();
+    name.split(".").pop().toLowerCase();
 
 
   if (
-    [
-      "jpg",
-      "jpeg",
-      "png",
-      "gif",
-      "webp"
-    ].includes(ext)
+    ["jpg", "jpeg", "png", "gif", "webp"]
+      .includes(ext)
   ) {
-
     return "🖼️";
-
   }
 
 
   if (
-    [
-      "mp4",
-      "mov",
-      "avi",
-      "mkv"
-    ].includes(ext)
+    ["mp4", "mov", "avi", "mkv"]
+      .includes(ext)
   ) {
-
     return "🎬";
-
   }
 
 
   if (
-    [
-      "mp3",
-      "wav",
-      "m4a"
-    ].includes(ext)
+    ["mp3", "wav", "m4a"]
+      .includes(ext)
   ) {
-
     return "🎵";
-
   }
 
 
   if (
-    [
-      "zip",
-      "rar",
-      "7z"
-    ].includes(ext)
+    ["zip", "rar", "7z"]
+      .includes(ext)
   ) {
-
     return "📦";
-
   }
 
 
   if (ext === "pdf") {
-
     return "📕";
-
   }
 
 
   if (
-    [
-      "doc",
-      "docx"
-    ].includes(ext)
+    ["doc", "docx"]
+      .includes(ext)
   ) {
-
     return "📘";
-
   }
 
 
   return "📄";
-
 }
 
 
-// ==========================================
-// START
-// ==========================================
+/* =========================
+   START
+========================= */
 
 loadFiles();
+startChatListener();

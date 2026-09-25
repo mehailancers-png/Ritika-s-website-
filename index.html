@@ -26,6 +26,8 @@
       </p>
     </section>
 
+    <!-- UPLOAD -->
+
     <section class="upload-card">
 
       <div class="upload-icon">↑</div>
@@ -60,6 +62,8 @@
 
     </section>
 
+    <!-- FILES -->
+
     <section class="files-section">
 
       <div class="section-heading">
@@ -80,6 +84,45 @@
         </div>
 
       </div>
+
+    </section>
+
+    <!-- CHAT -->
+
+    <section class="chat-section">
+
+      <div class="section-heading">
+        <div>
+          <p class="tiny">Little conversations</p>
+          <h2>Chat</h2>
+        </div>
+
+        <span class="chat-status">● Live</span>
+      </div>
+
+      <div id="chatMessages" class="chat-messages">
+        <div class="chat-empty">
+          <div>♡</div>
+          <p>No messages yet.</p>
+          <small>Say something.</small>
+        </div>
+      </div>
+
+      <form id="chatForm" class="chat-form">
+
+        <input
+          type="text"
+          id="messageInput"
+          placeholder="Write a message..."
+          autocomplete="off"
+          maxlength="1000"
+        >
+
+        <button type="submit" class="send-btn">
+          Send
+        </button>
+
+      </form>
 
     </section>
 

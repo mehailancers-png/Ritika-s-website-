@@ -14,9 +14,6 @@ import {
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
 
-
-// Firebase configuration
-
 const firebaseConfig = {
   apiKey: "AIzaSyBEwLV6WDvMkzuQ-ugOBm2S2YZqQ6Pp0PM",
   authDomain: "ritika-e71b7.firebaseapp.com",
@@ -28,7 +25,6 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-
 const db = getFirestore(app);
 
 
@@ -41,13 +37,22 @@ const CLOUDINARY_UPLOAD_PRESET = "ritika-files";
 
 
 // ==========================================
+// LIMITS
+// ==========================================
+
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
+
+// Cloudinary chunk size
+const CHUNK_SIZE = 20 * 1024 * 1024;
+
+
+// ==========================================
 // ELEMENTS
 // ==========================================
 
 const fileInput = document.getElementById("fileInput");
 const chooseBtn = document.getElementById("chooseBtn");
 const fileList = document.getElementById("fileList");
-const emptyState = document.getElementById("emptyState");
 const fileCount = document.getElementById("fileCount");
 
 const uploadCard = document.querySelector(".upload-card");
@@ -59,7 +64,7 @@ const progressBar = document.getElementById("progressBar");
 
 
 // ==========================================
-// LOCAL FILE STATE
+// STATE
 // ==========================================
 
 let files = [];
@@ -73,20 +78,13 @@ chooseBtn.addEventListener("click", () => {
   fileInput.click();
 });
 
-
-// ==========================================
-// FILE INPUT
-// ==========================================
-
 fileInput.addEventListener("change", (event) => {
 
   const selectedFiles = [...event.target.files];
 
   uploadFiles(selectedFiles);
 
-  // Allow selecting the same file again later
   fileInput.value = "";
-
 });
 
 
@@ -102,13 +100,11 @@ uploadCard.addEventListener("dragover", (event) => {
 
 });
 
-
 uploadCard.addEventListener("dragleave", () => {
 
   uploadCard.classList.remove("dragging");
 
 });
-
 
 uploadCard.addEventListener("drop", (event) => {
 
@@ -124,14 +120,30 @@ uploadCard.addEventListener("drop", (event) => {
 
 
 // ==========================================
-// UPLOAD MULTIPLE FILES
+// UPLOAD FILES
 // ==========================================
 
 async function uploadFiles(newFiles) {
 
-  if (!newFiles.length) {
-    return;
+  if (!newFiles.length) return;
+
+  const validFiles = [];
+
+  for (const file of newFiles) {
+
+    if (file.size > MAX_FILE_SIZE) {
+
+      alert(
+        `"${file.name}" is larger than 100 MB and cannot be uploaded.`
+      );
+
+      continue;
+    }
+
+    validFiles.push(file);
   }
+
+  if (!validFiles.length) return;
 
   progressBox.classList.remove("hidden");
 
@@ -139,45 +151,31 @@ async function uploadFiles(newFiles) {
 
   try {
 
-    for (let i = 0; i < newFiles.length; i++) {
+    for (let i = 0; i < validFiles.length; i++) {
 
-      const file = newFiles[i];
+      const file = validFiles[i];
 
       uploadStatus.textContent =
-        `Uploading ${i + 1} of ${newFiles.length}...`;
+        `Uploading ${i + 1} of ${validFiles.length}: ${file.name}`;
 
       progressPercent.textContent = "0%";
-
       progressBar.style.width = "0%";
 
+      const uploadedFile =
+        await uploadToCloudinaryChunked(file);
 
-      // Upload to Cloudinary
-      const uploadedFile = await uploadToCloudinary(file);
-
-
-      // Save file information to Firestore
-      await saveFileToFirestore(file, uploadedFile);
-
-
-      // Update percentage
-      const percent = Math.round(
-        ((i + 1) / newFiles.length) * 100
+      await saveFileToFirestore(
+        file,
+        uploadedFile
       );
 
-      progressPercent.textContent = `${percent}%`;
-      progressBar.style.width = `${percent}%`;
-
     }
-
 
     uploadStatus.textContent = "Upload complete!";
     progressPercent.textContent = "100%";
     progressBar.style.width = "100%";
 
-
-    // Reload files from Firestore
     await loadFiles();
-
 
     setTimeout(() => {
 
@@ -188,19 +186,16 @@ async function uploadFiles(newFiles) {
 
     }, 1200);
 
-
   } catch (error) {
 
     console.error("Upload error:", error);
 
     uploadStatus.textContent = "Upload failed";
-
     progressPercent.textContent = "Error";
-
     progressBar.style.width = "0%";
 
     alert(
-      "Something went wrong while uploading the file.\n\n" +
+      "Upload failed.\n\n" +
       error.message
     );
 
@@ -209,68 +204,210 @@ async function uploadFiles(newFiles) {
     chooseBtn.disabled = false;
 
   }
-
 }
 
 
 // ==========================================
-// CLOUDINARY UPLOAD
+// CLOUDINARY CHUNKED UPLOAD
 // ==========================================
 
-function uploadToCloudinary(file) {
+function uploadToCloudinaryChunked(file) {
 
   return new Promise((resolve, reject) => {
 
     const url =
       `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
 
-    const formData = new FormData();
+    let start = 0;
 
-    formData.append("file", file);
+    let uploadId = null;
 
-    formData.append(
-      "upload_preset",
-      CLOUDINARY_UPLOAD_PRESET
-    );
+    let lastResponse = null;
 
 
-    const xhr = new XMLHttpRequest();
+    async function uploadNextChunk() {
 
-    xhr.open("POST", url);
+      try {
 
-
-    // Upload progress
-    xhr.upload.addEventListener("progress", (event) => {
-
-      if (event.lengthComputable) {
-
-        const percent = Math.round(
-          (event.loaded / event.total) * 100
+        const end = Math.min(
+          start + CHUNK_SIZE,
+          file.size
         );
 
-        progressPercent.textContent = `${percent}%`;
+        const chunk = file.slice(
+          start,
+          end
+        );
 
-        progressBar.style.width = `${percent}%`;
+        const formData = new FormData();
+
+        formData.append(
+          "file",
+          chunk,
+          file.name
+        );
+
+        formData.append(
+          "upload_preset",
+          CLOUDINARY_UPLOAD_PRESET
+        );
+
+
+        const response =
+          await uploadChunk(
+            url,
+            formData,
+            start,
+            end,
+            file.size,
+            uploadId
+          );
+
+
+        lastResponse = response;
+
+        if (response.upload_id) {
+          uploadId = response.upload_id;
+        }
+
+
+        start = end;
+
+
+        const percent = Math.round(
+          (start / file.size) * 100
+        );
+
+        progressPercent.textContent =
+          `${percent}%`;
+
+        progressBar.style.width =
+          `${percent}%`;
+
+
+        if (
+          response.done === true ||
+          start >= file.size
+        ) {
+
+          resolve(response);
+
+          return;
+
+        }
+
+
+        await uploadNextChunk();
+
+      } catch (error) {
+
+        reject(error);
 
       }
 
-    });
+    }
+
+
+    uploadNextChunk();
+
+  });
+
+}
+
+
+// ==========================================
+// SEND CHUNK
+// ==========================================
+
+function uploadChunk(
+  url,
+  formData,
+  start,
+  end,
+  total,
+  uploadId
+) {
+
+  return new Promise((resolve, reject) => {
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.open(
+      "POST",
+      url
+    );
+
+
+    const contentRange =
+      `bytes ${start}-${end - 1}/${total}`;
+
+    xhr.setRequestHeader(
+      "Content-Range",
+      contentRange
+    );
+
+
+    if (uploadId) {
+
+      xhr.setRequestHeader(
+        "X-Unique-Upload-Id",
+        uploadId
+      );
+
+    }
+
+
+    xhr.upload.addEventListener(
+      "progress",
+      (event) => {
+
+        if (!event.lengthComputable) return;
+
+        const currentChunkProgress =
+          event.loaded / event.total;
+
+        const overallProgress =
+          (
+            start +
+            event.loaded
+          ) / total;
+
+        const percent =
+          Math.round(
+            overallProgress * 100
+          );
+
+        progressPercent.textContent =
+          `${percent}%`;
+
+        progressBar.style.width =
+          `${percent}%`;
+
+      }
+    );
 
 
     xhr.onload = () => {
 
-      if (xhr.status >= 200 && xhr.status < 300) {
+      if (
+        xhr.status >= 200 &&
+        xhr.status < 300
+      ) {
 
         try {
 
-          const response = JSON.parse(xhr.responseText);
+          resolve(
+            JSON.parse(
+              xhr.responseText
+            )
+          );
 
-          resolve(response);
-
-        } catch (error) {
+        } catch {
 
           reject(
-            new Error("Invalid Cloudinary response.")
+            new Error(
+              "Invalid Cloudinary response."
+            )
           );
 
         }
@@ -279,7 +416,7 @@ function uploadToCloudinary(file) {
 
         reject(
           new Error(
-            `Cloudinary upload failed (${xhr.status}).`
+            `Cloudinary error: ${xhr.status} - ${xhr.responseText}`
           )
         );
 
@@ -291,7 +428,9 @@ function uploadToCloudinary(file) {
     xhr.onerror = () => {
 
       reject(
-        new Error("Network error while uploading.")
+        new Error(
+          "Network error during upload."
+        )
       );
 
     };
@@ -305,10 +444,13 @@ function uploadToCloudinary(file) {
 
 
 // ==========================================
-// SAVE FILE TO FIRESTORE
+// FIRESTORE
 // ==========================================
 
-async function saveFileToFirestore(file, cloudinaryData) {
+async function saveFileToFirestore(
+  file,
+  cloudinaryData
+) {
 
   await addDoc(
     collection(db, "files"),
@@ -318,17 +460,24 @@ async function saveFileToFirestore(file, cloudinaryData) {
 
       size: file.size,
 
-      type: file.type || "application/octet-stream",
+      type:
+        file.type ||
+        "application/octet-stream",
 
-      url: cloudinaryData.secure_url,
+      url:
+        cloudinaryData.secure_url,
 
-      publicId: cloudinaryData.public_id,
+      publicId:
+        cloudinaryData.public_id,
 
-      resourceType: cloudinaryData.resource_type,
+      resourceType:
+        cloudinaryData.resource_type,
 
-      format: cloudinaryData.format || null,
+      format:
+        cloudinaryData.format || null,
 
-      createdAt: serverTimestamp()
+      createdAt:
+        serverTimestamp()
 
     }
   );
@@ -337,7 +486,7 @@ async function saveFileToFirestore(file, cloudinaryData) {
 
 
 // ==========================================
-// LOAD FILES FROM FIRESTORE
+// LOAD FILES
 // ==========================================
 
 async function loadFiles() {
@@ -346,13 +495,16 @@ async function loadFiles() {
 
     const filesQuery = query(
       collection(db, "files"),
-      orderBy("createdAt", "desc")
+      orderBy(
+        "createdAt",
+        "desc"
+      )
     );
 
-    const snapshot = await getDocs(filesQuery);
+    const snapshot =
+      await getDocs(filesQuery);
 
     files = [];
-
 
     snapshot.forEach((doc) => {
 
@@ -372,16 +524,18 @@ async function loadFiles() {
 
         publicId: data.publicId,
 
-        resourceType: data.resourceType,
+        resourceType:
+          data.resourceType,
 
-        format: data.format,
+        format:
+          data.format,
 
-        createdAt: data.createdAt
+        createdAt:
+          data.createdAt
 
       });
 
     });
-
 
     renderFiles();
 
@@ -390,10 +544,6 @@ async function loadFiles() {
     console.error(
       "Error loading files:",
       error
-    );
-
-    console.error(
-      "If this is the first run, check your Firestore rules/index."
     );
 
   }
@@ -409,12 +559,15 @@ function renderFiles() {
 
   fileList.innerHTML = "";
 
-  fileCount.textContent = files.length;
+  fileCount.textContent =
+    files.length;
 
 
   if (files.length === 0) {
 
-    fileList.appendChild(createEmptyState());
+    fileList.appendChild(
+      createEmptyState()
+    );
 
     return;
 
@@ -423,43 +576,48 @@ function renderFiles() {
 
   files.forEach((file) => {
 
-    const card = document.createElement("div");
+    const card =
+      document.createElement("div");
 
-    card.className = "file-card";
-
-
-    // -------------------------------
-    // ICON
-    // -------------------------------
-
-    const icon = document.createElement("div");
-
-    icon.className = "file-icon";
-
-    icon.textContent = getFileIcon(file.name);
+    card.className =
+      "file-card";
 
 
-    // -------------------------------
-    // INFO
-    // -------------------------------
+    const icon =
+      document.createElement("div");
 
-    const info = document.createElement("div");
+    icon.className =
+      "file-icon";
 
-    info.className = "file-info";
-
-
-    const name = document.createElement("div");
-
-    name.className = "file-name";
-
-    name.textContent = file.name;
+    icon.textContent =
+      getFileIcon(file.name);
 
 
-    const size = document.createElement("div");
+    const info =
+      document.createElement("div");
 
-    size.className = "file-size";
+    info.className =
+      "file-info";
 
-    size.textContent = formatSize(file.size);
+
+    const name =
+      document.createElement("div");
+
+    name.className =
+      "file-name";
+
+    name.textContent =
+      file.name;
+
+
+    const size =
+      document.createElement("div");
+
+    size.className =
+      "file-size";
+
+    size.textContent =
+      formatSize(file.size);
 
 
     info.appendChild(name);
@@ -467,36 +625,34 @@ function renderFiles() {
     info.appendChild(size);
 
 
-    // -------------------------------
-    // DOWNLOAD BUTTON
-    // -------------------------------
+    const download =
+      document.createElement("button");
 
-    const download = document.createElement("button");
+    download.className =
+      "download-btn";
 
-    download.className = "download-btn";
+    download.textContent =
+      "↓";
 
-    download.textContent = "↓";
-
-    download.title = "Download";
-
-
-    download.addEventListener("click", () => {
-
-      downloadFile(file);
-
-    });
+    download.title =
+      "Download";
 
 
-    // -------------------------------
-    // CARD
-    // -------------------------------
+    download.addEventListener(
+      "click",
+      () => {
+
+        downloadFile(file);
+
+      }
+    );
+
 
     card.appendChild(icon);
 
     card.appendChild(info);
 
     card.appendChild(download);
-
 
     fileList.appendChild(card);
 
@@ -511,9 +667,11 @@ function renderFiles() {
 
 function createEmptyState() {
 
-  const div = document.createElement("div");
+  const div =
+    document.createElement("div");
 
-  div.className = "empty-state";
+  div.className =
+    "empty-state";
 
   div.innerHTML = `
     <div>♡</div>
@@ -527,29 +685,36 @@ function createEmptyState() {
 
 
 // ==========================================
-// DOWNLOAD FILE
+// DOWNLOAD
 // ==========================================
 
 function downloadFile(file) {
 
   if (!file.url) {
 
-    alert("File URL not found.");
+    alert(
+      "File URL not found."
+    );
 
     return;
 
   }
 
 
-  const link = document.createElement("a");
+  const link =
+    document.createElement("a");
 
-  link.href = file.url;
+  link.href =
+    file.url;
 
-  link.target = "_blank";
+  link.target =
+    "_blank";
 
-  link.rel = "noopener noreferrer";
+  link.rel =
+    "noopener noreferrer";
 
-  link.download = file.name;
+  link.download =
+    file.name;
 
 
   document.body.appendChild(link);
@@ -562,14 +727,12 @@ function downloadFile(file) {
 
 
 // ==========================================
-// FORMAT FILE SIZE
+// SIZE
 // ==========================================
 
 function formatSize(bytes) {
 
-  if (!bytes) {
-    return "0 B";
-  }
+  if (!bytes) return "0 B";
 
 
   if (bytes < 1024) {
@@ -581,19 +744,30 @@ function formatSize(bytes) {
 
   if (bytes < 1024 * 1024) {
 
-    return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(
+      bytes / 1024
+    ).toFixed(1)} KB`;
 
   }
 
 
-  if (bytes < 1024 * 1024 * 1024) {
+  if (
+    bytes <
+    1024 * 1024 * 1024
+  ) {
 
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(
+      bytes /
+      (1024 * 1024)
+    ).toFixed(1)} MB`;
 
   }
 
 
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  return `${(
+    bytes /
+    (1024 * 1024 * 1024)
+  ).toFixed(1)} GB`;
 
 }
 
@@ -605,11 +779,20 @@ function formatSize(bytes) {
 function getFileIcon(name) {
 
   const ext =
-    name.split(".").pop().toLowerCase();
+    name
+      .split(".")
+      .pop()
+      .toLowerCase();
 
 
   if (
-    ["jpg", "jpeg", "png", "gif", "webp"].includes(ext)
+    [
+      "jpg",
+      "jpeg",
+      "png",
+      "gif",
+      "webp"
+    ].includes(ext)
   ) {
 
     return "🖼️";
@@ -618,7 +801,12 @@ function getFileIcon(name) {
 
 
   if (
-    ["mp4", "mov", "avi", "mkv"].includes(ext)
+    [
+      "mp4",
+      "mov",
+      "avi",
+      "mkv"
+    ].includes(ext)
   ) {
 
     return "🎬";
@@ -627,7 +815,11 @@ function getFileIcon(name) {
 
 
   if (
-    ["mp3", "wav", "m4a"].includes(ext)
+    [
+      "mp3",
+      "wav",
+      "m4a"
+    ].includes(ext)
   ) {
 
     return "🎵";
@@ -636,7 +828,11 @@ function getFileIcon(name) {
 
 
   if (
-    ["zip", "rar", "7z"].includes(ext)
+    [
+      "zip",
+      "rar",
+      "7z"
+    ].includes(ext)
   ) {
 
     return "📦";
@@ -644,7 +840,7 @@ function getFileIcon(name) {
   }
 
 
-  if (["pdf"].includes(ext)) {
+  if (ext === "pdf") {
 
     return "📕";
 
@@ -652,7 +848,10 @@ function getFileIcon(name) {
 
 
   if (
-    ["doc", "docx"].includes(ext)
+    [
+      "doc",
+      "docx"
+    ].includes(ext)
   ) {
 
     return "📘";
@@ -666,7 +865,7 @@ function getFileIcon(name) {
 
 
 // ==========================================
-// INITIAL LOAD
+// START
 // ==========================================
 
 loadFiles();

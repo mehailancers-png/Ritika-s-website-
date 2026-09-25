@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>For Ritika ♡</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Pacifico&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <main class="container">
+
+    <section class="hero">
+      <div class="cloud">☁️</div>
+
+      <p class="tiny">A little file corner</p>
+      <h1>For Ritika <span>♡</span></h1>
+      <p class="subtitle">
+        Your files, all in one little place.
+      </p>
+    </section>
+
+    <section class="upload-card">
+
+      <div class="upload-icon">↑</div>
+
+      <h2>Drop your files here</h2>
+
+      <p>
+        Drag & drop or choose files from your device
+      </p>
+
+      <input
+        type="file"
+        id="fileInput"
+        multiple
+        hidden
+      >
+
+      <button id="chooseBtn" class="primary-btn">
+        Choose Files
+      </button>
+
+      <div id="progressBox" class="progress-box hidden">
+        <div class="progress-info">
+          <span id="uploadStatus">Uploading...</span>
+          <span id="progressPercent">0%</span>
+        </div>
+
+        <div class="progress">
+          <div id="progressBar"></div>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="files-section">
+
+      <div class="section-heading">
+        <div>
+          <p class="tiny">Shared space</p>
+          <h2>Files for Ritika</h2>
+        </div>
+
+        <span id="fileCount" class="count">0</span>
+      </div>
+
+      <div id="fileList" class="file-list">
+
+        <div id="emptyState" class="empty-state">
+          <div>♡</div>
+          <p>Nothing here yet, Ritika.</p>
+          <small>Upload something and it'll appear here.</small>
+        </div>
+
+      </div>
+
+    </section>
+
+    <footer>
+      Made with <span>♡</span> for Ritika
+    </footer>
+
+  </main>
+
+  <script type="module" src="app.js"></script>
+
+</body>
+</html>
